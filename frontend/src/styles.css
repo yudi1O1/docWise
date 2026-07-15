@@ -1,0 +1,115 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #f7f5ef;
+  color: #17202a;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.docwise-document-prose {
+  min-height: inherit;
+  height: auto;
+  overflow: visible;
+  padding: 64px 72px;
+  outline: none;
+  color: #17202a;
+  font-family: Arial, ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.docwise-document-prose.ProseMirror {
+  min-height: inherit;
+  overflow: visible;
+}
+
+.docwise-document-prose p {
+  margin: 0 0 0.85rem;
+}
+
+.docwise-document-prose h1,
+.docwise-document-prose h2,
+.docwise-document-prose h3,
+.docwise-document-prose h4,
+.docwise-document-prose h5,
+.docwise-document-prose h6 {
+  margin: 0 0 0.9rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.docwise-document-prose h1 {
+  font-size: 1.9rem;
+}
+
+.docwise-document-prose h2 {
+  font-size: 1.55rem;
+}
+
+.docwise-document-prose h3 {
+  font-size: 1.25rem;
+}
+
+.docwise-document-prose ul,
+.docwise-document-prose ol {
+  margin: 0 0 0.85rem 1.4rem;
+  padding: 0;
+}
+
+.docwise-document-prose li {
+  margin: 0.2rem 0;
+}
+
+.docwise-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 2rem;
+  margin: 0 0 1rem;
+  align-items: start;
+}
+
+.docwise-column {
+  min-width: 0;
+}
+
+.docwise-column > :last-child {
+  margin-bottom: 0;
+}
+
+.docwise-document-prose .ProseMirror-selectednode {
+  outline: 2px solid #3b82f6;
+}
+
+@layer components {
+  .toolbar-button,
+  .toolbar-segment {
+    display: grid;
+    height: 2.25rem;
+    width: 2.25rem;
+    place-items: center;
+    border: 1px solid #d8d3c8;
+    background: white;
+  }
+
+  .toolbar-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+}
