@@ -6,3 +6,5 @@ frontend/dist
 frontend/*.tsbuildinfo
 .pytest_cache
 .tmp-manual
+.vercel
+.vercel-stage

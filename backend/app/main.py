@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.ai import router as ai_router
 from app.api.health import router as health_router
 from app.api.pdf import router as pdf_router
 from app.core.config import get_settings
@@ -20,3 +21,4 @@ app.add_middleware(
 
 app.include_router(health_router, prefix="/api")
 app.include_router(pdf_router, prefix="/api/pdf")
+app.include_router(ai_router, prefix="/api/ai")

@@ -117,7 +117,7 @@ export function deriveReflowedPage(page: PageModel): PageModel {
       const previousChangedLayout =
         Math.abs(previousEffective.y - sourceY(previous)) >= LAYOUT_EPSILON ||
         (hasEffectiveModification(previousEffective) &&
-          Math.abs(effectiveHeight(previousEffective) - sourceHeight(previous)) >= LAYOUT_EPSILON);
+          previousEffective.height > sourceHeight(previous) + LAYOUT_EPSILON);
       if (!previousChangedLayout) {
         continue;
       }

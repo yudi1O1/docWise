@@ -113,14 +113,28 @@ function placementToTextElements(placement: TextPlacement, pages: PageModel[], c
   const fontSize = placement.style.fontSize ?? DEFAULT_FONT_SIZE;
   const lineHeight = placement.style.lineHeight ?? DEFAULT_LINE_HEIGHT;
   const sourceBounds = placement.sourceBounds;
-  const x = DEFAULT_MARGIN + (placement.style.indentation ? Math.min(24, Math.max(0, placement.style.indentation - DEFAULT_MARGIN)) : 0);
-  const width = Math.max(120, page.width - x - DEFAULT_MARGIN);
-  const chunks = splitTextForPages(placement.listMarker ? `${placement.listMarker} ${placement.text}` : placement.text, width, fontSize, lineHeight, pages, cursor);
+  const isRightOrSideAligned = Boolean(
+    sourceBounds && (sourceBounds.x > DEFAULT_MARGIN + 36 || placement.style.alignment === "right" || placement.style.alignment === "center")
+  );
+  const defaultX = DEFAULT_MARGIN + (placement.style.indentation ? Math.min(24, Math.max(0, placement.style.indentation - DEFAULT_MARGIN)) : 0);
+  const x = isRightOrSideAligned && sourceBounds ? sourceBounds.x : defaultX;
+  const width = isRightOrSideAligned && sourceBounds ? Math.max(80, sourceBounds.width) : Math.max(120, page.width - x - DEFAULT_MARGIN);
+
+  const chunks = splitTextForPages(
+    placement.listMarker ? `${placement.listMarker} ${placement.text}` : placement.text,
+    width,
+    fontSize,
+    lineHeight,
+    pages,
+    cursor,
+  );
 
   return chunks.map((chunk, index) => {
     const activePage = pages[chunk.pageIndex];
     const targetPageNumber = activePage.pageNumber;
     const sourcePage = placement.sourcePage ?? targetPageNumber;
+    const elementY = isRightOrSideAligned && sourceBounds && index === 0 ? sourceBounds.y : chunk.y;
+
     return {
       pageIndex: chunk.pageIndex,
       element: {
@@ -128,7 +142,7 @@ function placementToTextElements(placement: TextPlacement, pages: PageModel[], c
         type: "text",
         content: chunk.text,
         x,
-        y: chunk.y,
+        y: elementY,
         width,
         height: chunk.height,
         fontSize,
@@ -141,7 +155,7 @@ function placementToTextElements(placement: TextPlacement, pages: PageModel[], c
           pageNumber: sourcePage,
           originalText: index === 0 ? placement.sourceText ?? placement.text : chunk.text,
           originalX: index === 0 ? sourceBounds?.x ?? x : x,
-          originalY: index === 0 ? sourceBounds?.y ?? chunk.y : chunk.y,
+          originalY: index === 0 ? sourceBounds?.y ?? elementY : elementY,
           originalWidth: index === 0 ? sourceBounds?.width ?? width : width,
           originalHeight: index === 0 ? sourceBounds?.height ?? chunk.height : chunk.height,
           isNew: !sourceBounds || index > 0,

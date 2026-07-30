@@ -35,6 +35,7 @@ export interface PageModel {
   pageNumber: number;
   width: number;
   height: number;
+  rotation?: number;
   elements: DocumentElement[];
 }
 
@@ -49,6 +50,7 @@ export interface SourcePageMetadata {
   pageNumber: number;
   width: number;
   height: number;
+  rotation?: number;
 }
 
 export interface SourceBounds {
@@ -77,6 +79,8 @@ export interface DocumentStyle {
   fontFamily?: string;
   fontSize?: number;
   fontWeight?: string | number;
+  fontStyle?: "normal" | "italic";
+  color?: string;
   alignment?: "left" | "center" | "right" | "justify";
   lineHeight?: number;
   marginTop?: number;

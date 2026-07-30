@@ -20,6 +20,10 @@ interface DocumentSessionState {
   zoom: number;
   undoStack: Snapshot[];
   redoStack: Snapshot[];
+  editorInstance: any | null;
+  setEditorInstance: (editor: any | null) => void;
+  isAiHighlighted: boolean;
+  triggerAiHighlight: () => void;
   loadDocument: (file: File, document: DocumentModel) => void;
   reset: () => void;
   setMode: (mode: EditorMode) => void;
@@ -46,6 +50,15 @@ export const useDocumentSession = create<DocumentSessionState>((set, get) => ({
   zoom: 1,
   undoStack: [],
   redoStack: [],
+  editorInstance: null,
+  setEditorInstance: (editor) => set({ editorInstance: editor }),
+  isAiHighlighted: false,
+  triggerAiHighlight: () => {
+    set({ isAiHighlighted: true });
+    window.setTimeout(() => {
+      set({ isAiHighlighted: false });
+    }, 2500);
+  },
   loadDocument: (file, document) =>
     set({
       originalFile: file,

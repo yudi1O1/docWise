@@ -56,9 +56,9 @@ interface TypographyProfile {
 }
 
 const BASELINE_TOLERANCE = 3.5;
-const COLUMN_GAP = 72;
+const COLUMN_GAP = 24;
 const SAME_WORD_GAP_RATIO = 0.28;
-const LARGE_GAP_RATIO = 5.5;
+const LARGE_GAP_RATIO = 2.2;
 const PARAGRAPH_GAP_RATIO = 1.35;
 const INDENT_TOLERANCE = 14;
 const FONT_TOLERANCE = 1.5;
@@ -217,7 +217,8 @@ function detectLayoutRegions(items: NormalizedTextItem[]): LayoutRegion[] {
     const region = regions.find((candidate) => {
       const horizontalOverlap = Math.min(candidate.right, itemRight) - Math.max(candidate.left, item.x);
       const overlaps = horizontalOverlap > Math.min(item.width, candidate.right - candidate.left) * REGION_OVERLAP_RATIO;
-      const nearby = Math.abs(item.x - candidate.left) <= COLUMN_GAP || Math.abs(itemRight - candidate.right) <= COLUMN_GAP;
+      const horizontalGap = Math.max(0, Math.max(candidate.left - itemRight, item.x - candidate.right));
+      const nearby = horizontalGap <= COLUMN_GAP;
       return overlaps || nearby;
     });
     if (region) {
@@ -242,7 +243,7 @@ function detectLayoutRegions(items: NormalizedTextItem[]): LayoutRegion[] {
 }
 
 function shouldRepresentAsColumns(regions: LayoutRegion[]): boolean {
-  if (regions.length < 2 || regions.length > 3) {
+  if (regions.length < 2 || regions.length > 4) {
     return false;
   }
   const sorted = [...regions].sort((a, b) => a.bounds.x - b.bounds.x);
@@ -255,7 +256,7 @@ function shouldRepresentAsColumns(regions: LayoutRegion[]): boolean {
     const previous = sorted[index - 1];
     return region.bounds.x - (previous.bounds.x + previous.bounds.width) >= COLUMN_GAP;
   });
-  return separated && verticalOverlap > maxHeight * 0.2;
+  return separated && verticalOverlap > maxHeight * 0.15;
 }
 
 function belongsToLine(line: NormalizedTextItem[], item: NormalizedTextItem): boolean {
@@ -269,8 +270,8 @@ function belongsToLine(line: NormalizedTextItem[], item: NormalizedTextItem): bo
     const distance = Math.min(Math.abs(item.x - (fragment.x + fragment.width)), Math.abs(fragment.x - (item.x + item.width)));
     return distance < closest.distance ? { distance, fragment } : closest;
   }, { distance: Number.POSITIVE_INFINITY, fragment: sorted[0] });
-  const gapLimit = Math.max(COLUMN_GAP, Math.min(item.fontSize, nearest.fragment.fontSize) * LARGE_GAP_RATIO);
-  return nearest.distance <= gapLimit;
+  const maxWordGap = Math.max(16, Math.min(item.fontSize, nearest.fragment.fontSize) * 1.8);
+  return nearest.distance <= maxWordGap;
 }
 
 function makeLine(items: NormalizedTextItem[]): TextLine {
@@ -291,6 +292,8 @@ function makeLine(items: NormalizedTextItem[]): TextLine {
       fontFamily: dominant.fontFamily,
       fontSize: dominant.fontSize,
       fontWeight: dominant.fontWeight,
+      fontStyle: dominant.fontStyle,
+      color: dominant.color !== "#000000" && dominant.color !== "#000" ? dominant.color : undefined,
       alignment: detectAlignment(bounds, dominant),
       lineHeight: 1.25,
       marginBottom: Math.max(4, dominant.fontSize * 0.4),
@@ -347,11 +350,20 @@ function continuesParagraph(previous: TextLine, current: TextLine): boolean {
 }
 
 function makeNodeFromLines(lines: TextLine[], profile: TypographyProfile): DocumentNode {
-  const text = lines.map((line) => line.text).join(" ");
   const bounds = boundsForLines(lines);
   const first = lines[0];
-  const content = inlineText(text, first.marks);
-  const style = { ...first.style, marginBottom: paragraphMargin(lines) };
+  const baseStyle = { ...first.style, marginBottom: paragraphMargin(lines) };
+
+  // Build inline content preserving per-span marks
+  const content = lines.length === 1
+    ? inlineText(first.text, first.marks)
+    : lines.flatMap((line) => [
+        ...inlineText(line.text, line.marks),
+        // Add a soft space between joined lines
+        ...(line === lines[lines.length - 1] ? [] : [{ type: "text" as const, text: " " }]),
+      ]);
+
+  const text = lines.map((l) => l.text).join(" ");
 
   if (isHeading(lines, profile)) {
     return {
@@ -359,7 +371,7 @@ function makeNodeFromLines(lines: TextLine[], profile: TypographyProfile): Docum
       type: "heading",
       level: headingLevel(first.style.fontSize ?? profile.bodyFontSize, profile),
       content,
-      style: { ...style, fontWeight: "bold" },
+      style: { ...baseStyle, fontWeight: "bold" },
       sourcePage: first.pageNumber,
       sourceBounds: bounds,
       sourceText: text,
@@ -370,7 +382,7 @@ function makeNodeFromLines(lines: TextLine[], profile: TypographyProfile): Docum
     id: `paragraph-${stableHash(`${first.pageNumber}:${bounds.x}:${bounds.y}:${text}`)}`,
     type: "paragraph",
     content,
-    style,
+    style: baseStyle,
     sourcePage: first.pageNumber,
     sourceBounds: bounds,
     sourceText: text,
@@ -415,11 +427,11 @@ function isListLine(line: TextLine): boolean {
 }
 
 function parseListLine(text: string): { kind: "bullet" | "ordered"; text: string; contentX?: number } | null {
-  const bullet = text.match(/^([*+\-\u2022\u25cf\u25cb\u25aa\u2013])\s+(.+)$/);
+  const bullet = text.match(/^([*+\-\u2022\u2023\u25e6\u2043\u2219\u25cf\u25cb\u25aa\u25ab\u25fe\u25fd\u2013\u2014\uf0b7\uF0B7\uf0a7\uf0d8])\s*(.+)$/);
   if (bullet) {
     return { kind: "bullet", text: bullet[2].trim() };
   }
-  const ordered = text.match(/^((?:\d+|[a-zA-Z]|[ivxlcdmIVXLCDM]+)[.)])\s+(.+)$/);
+  const ordered = text.match(/^((?:\d+|[a-zA-Z]|[ivxlcdmIVXLCDM]+)[.)])\s*(.+)$/);
   if (ordered) {
     return { kind: "ordered", text: ordered[2].trim() };
   }
@@ -432,8 +444,10 @@ function isHeading(lines: TextLine[], profile: TypographyProfile): boolean {
   }
   const line = lines[0];
   const fontSize = line.style.fontSize ?? profile.bodyFontSize;
-  const shortText = line.text.length < 120;
-  return shortText && (fontSize >= profile.headingThreshold || line.style.fontWeight === "bold" || isAllCapsHeading(line.text));
+  const shortText = line.text.length < 60;
+  const isSignificantlyLarger = fontSize >= profile.bodyFontSize * 1.35;
+  const isSectionTitle = isAllCapsHeading(line.text) && line.text.length < 40;
+  return shortText && (isSignificantlyLarger || isSectionTitle);
 }
 
 function headingLevel(fontSize: number, profile: TypographyProfile): 1 | 2 | 3 | 4 | 5 | 6 {
@@ -454,8 +468,8 @@ function typographyProfile(items: NormalizedTextItem[]): TypographyProfile {
   const bodyFontSize = sizes.length > 0 ? sizes[Math.floor((sizes.length - 1) / 2)] : 12;
   return {
     bodyFontSize,
-    headingThreshold: bodyFontSize * 1.18,
-    titleThreshold: bodyFontSize * 1.65,
+    headingThreshold: bodyFontSize * 1.25,
+    titleThreshold: bodyFontSize * 1.75,
   };
 }
 
@@ -464,17 +478,27 @@ function typographyProfileFromLines(lines: TextLine[]): TypographyProfile {
 }
 
 function detectAlignment(bounds: SourceBounds, item: NormalizedTextItem): "left" | "center" | "right" {
-  const pageCenter = item.pageWidth / 2;
-  const lineCenter = bounds.x + bounds.width / 2;
+  if (item.alignment === "center" || item.alignment === "right") {
+    return item.alignment;
+  }
   const rightMargin = item.pageWidth - (bounds.x + bounds.width);
   const leftMargin = bounds.x;
-  if (Math.abs(lineCenter - pageCenter) <= Math.max(12, item.pageWidth * 0.03)) {
+
+  const isCenteredSpace =
+    leftMargin > item.pageWidth * 0.12 &&
+    rightMargin > item.pageWidth * 0.12 &&
+    Math.abs(leftMargin - rightMargin) <= 16 &&
+    bounds.width < item.pageWidth * 0.65;
+
+  if (isCenteredSpace) {
     return "center";
   }
-  if (rightMargin < leftMargin * 0.45) {
+
+  if (leftMargin > item.pageWidth * 0.5 && rightMargin < leftMargin * 0.45) {
     return "right";
   }
-  return item.alignment;
+
+  return "left";
 }
 
 function paragraphMargin(lines: TextLine[]): number {
@@ -510,8 +534,27 @@ function dominantItem(items: NormalizedTextItem[]): NormalizedTextItem {
   return [...items].sort((a, b) => b.text.length - a.text.length || b.fontSize - a.fontSize)[0];
 }
 
-function inlineText(text: string, marks?: InlineText["marks"]): InlineContent[] {
-  return [{ type: "text", text, marks }];
+function inlineText(text: string, defaultMarks?: InlineText["marks"]): InlineContent[] {
+  if (!text.includes("**")) {
+    return [{ type: "text", text, marks: defaultMarks }];
+  }
+
+  const parts: InlineContent[] = [];
+  const regex = /(\*\*(.*?)\*\*|([^*]+))/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match[2]) {
+      const boldMarks: InlineText["marks"] = defaultMarks
+        ? (Array.from(new Set([...defaultMarks, "bold"])) as InlineText["marks"])
+        : ["bold"];
+      parts.push({ type: "text", text: match[2], marks: boldMarks });
+    } else if (match[3]) {
+      parts.push({ type: "text", text: match[3], marks: defaultMarks });
+    }
+  }
+
+  return parts.length > 0 ? parts : [{ type: "text", text, marks: defaultMarks }];
 }
 
 function boundsFor(items: NormalizedTextItem[]): SourceBounds {

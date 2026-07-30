@@ -62,8 +62,12 @@ describe("TextOverlayElement", () => {
     useDocumentSession.setState({ selectedElementId: "text-1" });
     render(<TextOverlayElement element={sourceElement} />);
 
+    // Width = max(sourceRect.width, rect.width) = max(80, 80) = 80
+    // Uses pre-wrap so text wraps within the element, matching PDF layout
     expect(screen.getByTestId("active-text-editor")).toHaveStyle({
-      width: "min(80px, calc(100% - 10px))",
+      width: "80px",
+      whiteSpace: "pre-wrap",
+      overflow: "hidden",
     });
   });
 
@@ -121,21 +125,24 @@ describe("TextOverlayElement", () => {
       />,
     );
 
+    // Anchored at left:380px. Width = original element width (80px).
+    // Text wraps within the element boundary — no horizontal scrollbar.
     expect(screen.getByTestId("active-text-editor")).toHaveStyle({
       left: "380px",
-      width: "min(260px, calc(100% - 380px))",
-      maxWidth: "calc(100% - 380px)",
+      width: "80px",
       whiteSpace: "pre-wrap",
-      overflowWrap: "break-word",
+      overflow: "hidden",
     });
   });
 
   it("renders automatically reflowed unchanged text once at its effective position", () => {
     render(<TextOverlayElement element={{ ...sourceElement, y: 52 }} />);
 
-    expect(screen.getByTestId("text-source-mask")).toHaveStyle({ top: "20px" });
-    expect(screen.getByTestId("modified-text-preview")).toHaveTextContent("Original");
-    expect(screen.getByTestId("modified-text-preview")).toHaveStyle({ top: "52px" });
+    // Reflowed-but-unmodified elements render as transparent hit-regions.
+    // The PDF canvas already shows the text correctly — no mask or preview needed.
+    expect(screen.getByTestId("text-hit-region")).toBeInTheDocument();
+    expect(screen.queryByTestId("text-source-mask")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("modified-text-preview")).not.toBeInTheDocument();
     expect(screen.queryByTestId("active-text-editor")).not.toBeInTheDocument();
   });
 });

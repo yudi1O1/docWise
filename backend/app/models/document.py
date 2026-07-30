@@ -42,6 +42,7 @@ class PageModel(BaseModel):
     page_number: int = Field(alias="pageNumber", ge=1)
     width: float = Field(gt=0)
     height: float = Field(gt=0)
+    rotation: int = Field(default=0, ge=0)
     elements: list[DocumentElement]
 
     model_config = {"populate_by_name": True}

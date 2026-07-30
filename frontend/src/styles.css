@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -10,10 +12,11 @@ body,
 
 body {
   margin: 0;
-  background: #f7f5ef;
+  background: #f4f7f4;
   color: #17202a;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    'Plus Jakarta Sans', Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
@@ -27,12 +30,11 @@ textarea {
   min-height: inherit;
   height: auto;
   overflow: visible;
-  padding: 64px 72px;
+  padding: 48px 56px;
   outline: none;
-  color: #17202a;
-  font-family: Arial, ui-sans-serif, system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.45;
+  color: #1e293b;
+  /* No font-size here — each element carries its own from the PDF */
+  line-height: 1.5;
 }
 
 .docwise-document-prose.ProseMirror {
@@ -40,8 +42,10 @@ textarea {
   overflow: visible;
 }
 
+/* Each paragraph/heading/li gets its own font-size via inline style from TypographyAttrs */
 .docwise-document-prose p {
-  margin: 0 0 0.85rem;
+  margin: 0 0 0.4em;
+  line-height: 1.5;
 }
 
 .docwise-document-prose h1,
@@ -50,36 +54,33 @@ textarea {
 .docwise-document-prose h4,
 .docwise-document-prose h5,
 .docwise-document-prose h6 {
-  margin: 0 0 0.9rem;
+  /* font-size deliberately NOT set — comes from inline style */
   font-weight: 700;
-  line-height: 1.2;
+  color: #0f172a;
+  margin: 0.6em 0 0.3em;
+  line-height: 1.25;
 }
 
-.docwise-document-prose h1 {
-  font-size: 1.9rem;
+.docwise-document-prose ul {
+  list-style-type: disc;
+  margin: 0 0 0.75em 1.25em;
+  padding: 0;
 }
 
-.docwise-document-prose h2 {
-  font-size: 1.55rem;
-}
-
-.docwise-document-prose h3 {
-  font-size: 1.25rem;
-}
-
-.docwise-document-prose ul,
 .docwise-document-prose ol {
-  margin: 0 0 0.85rem 1.4rem;
+  list-style-type: decimal;
+  margin: 0 0 0.75em 1.25em;
   padding: 0;
 }
 
 .docwise-document-prose li {
-  margin: 0.2rem 0;
+  margin: 0.25em 0;
+  line-height: 1.5;
 }
 
 .docwise-columns {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 2rem;
   margin: 0 0 1rem;
   align-items: start;
@@ -95,6 +96,7 @@ textarea {
 
 .docwise-document-prose .ProseMirror-selectednode {
   outline: 2px solid #3b82f6;
+  border-radius: 2px;
 }
 
 @layer components {
@@ -104,12 +106,53 @@ textarea {
     height: 2.25rem;
     width: 2.25rem;
     place-items: center;
-    border: 1px solid #d8d3c8;
+    border: 1px solid #e2ddd6; /* line token */
+    border-radius: 4px;
     background: white;
+    transition: background-color 0.15s, color 0.15s;
+  }
+
+  .toolbar-button:hover:not(:disabled) {
+    background: #f4f7f4; /* green-tinted paper */
   }
 
   .toolbar-button:disabled {
     cursor: not-allowed;
     opacity: 0.45;
   }
+
+  /* Reconstructed document text elements — hover ring in edit mode */
+  .hover\:border-accent\/30:hover,
+  .docwise-text-hover:hover {
+    border-color: rgba(62, 173, 176, 0.32) !important;
+  }
+
+  /* Suppress browser default blue outline/glow on contenteditable elements */
+  [contenteditable="true"]:focus {
+    outline: none !important;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Caret matches the DocWise teal accent */
+  [contenteditable="true"] {
+    caret-color: #3eadb0;
+  }
+}
+
+@keyframes docwiseHighlight {
+  0% {
+    background-color: #fef08a;
+    box-shadow: 0 0 18px rgba(234, 179, 8, 0.45);
+  }
+  60% {
+    background-color: #fef9c3;
+  }
+  100% {
+    background-color: #ffffff;
+    box-shadow: none;
+  }
+}
+
+.docwise-highlight-flash {
+  animation: docwiseHighlight 2.5s ease-out forwards;
 }

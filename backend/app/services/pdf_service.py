@@ -69,6 +69,8 @@ def export_pdf(original_data: bytes, document: DocumentModel) -> bytes:
             _apply_source_redactions(doc, document)
             for page_model in document.pages:
                 page = doc[page_model.page_number - 1]
+                if getattr(page_model, "rotation", 0):
+                    page.set_rotation(page_model.rotation)
                 _draw_page_edits(page, page_model.elements)
 
             output = BytesIO()
@@ -91,7 +93,66 @@ def _parse_page(page: fitz.Page, page_number: int) -> PageModel:
             continue
         elements.extend(_parse_text_block(block, page_number, block_index))
 
-    return PageModel(pageNumber=page_number, width=page.rect.width, height=page.rect.height, elements=elements)
+    if not elements:
+        elements = _ocr_parse_page(page, page_number)
+
+    return PageModel(pageNumber=page_number, width=page.rect.width, height=page.rect.height, rotation=page.rotation, elements=elements)
+
+
+def _ocr_parse_page(page: fitz.Page, page_number: int) -> list[TextElement]:
+    try:
+        from app.services.ocr_service import get_ocr_engine
+        engine = get_ocr_engine()
+        pix = page.get_pixmap(dpi=150)
+        img_bytes = pix.tobytes("png")
+        result, _ = engine(img_bytes)
+        if not result:
+            return []
+
+        scale_x = page.rect.width / pix.width
+        scale_y = page.rect.height / pix.height
+        elements: list[TextElement] = []
+
+        for idx, (box, text, _confidence) in enumerate(result):
+            clean_text = text.strip() if text else ""
+            if not clean_text:
+                continue
+            x0 = float(box[0][0]) * scale_x
+            y0 = float(box[0][1]) * scale_y
+            x1 = float(box[2][0]) * scale_x
+            y1 = float(box[2][1]) * scale_y
+            w = max(0, x1 - x0)
+            h = max(0, y1 - y0)
+            digest = sha256(f"{page_number}:{idx}:{clean_text}:{x0}:{y0}".encode("utf-8")).hexdigest()[:16]
+            elements.append(
+                TextElement(
+                    id=f"p{page_number}-ocr{digest}",
+                    content=clean_text,
+                    x=x0,
+                    y=y0,
+                    width=w,
+                    height=h,
+                    fontSize=max(10, h * 0.8),
+                    fontFamily="Helvetica",
+                    fontWeight="normal",
+                    fontStyle="normal",
+                    color="#000000",
+                    alignment="left",
+                    rotation=0,
+                    source=ElementSource(
+                        pageNumber=page_number,
+                        originalText=clean_text,
+                        originalX=x0,
+                        originalY=y0,
+                        originalWidth=w,
+                        originalHeight=h,
+                        isNew=False,
+                    ),
+                )
+            )
+        return elements
+    except Exception:
+        return []
 
 
 def _parse_text_block(block: dict, page_number: int, block_index: int) -> list[TextElement]:
@@ -100,40 +161,49 @@ def _parse_text_block(block: dict, page_number: int, block_index: int) -> list[T
     if not lines:
         return []
 
-    grouped: list[list[dict]] = []
-    current: list[dict] = []
-    for line in lines:
-        if current and not _belongs_to_same_edit_block(current[-1], line):
-            grouped.append(current)
-            current = []
-        current.append(line)
-    if current:
-        grouped.append(current)
-
-    return [_text_element_from_lines(group, page_number, block_index, group_index) for group_index, group in enumerate(grouped)]
+    return [_text_element_from_lines([line], page_number, block_index, line_index) for line_index, line in enumerate(lines)]
 
 
 def _line_payload(line: dict) -> dict | None:
     spans = line.get("spans", [])
     if not spans:
         return None
-    content = "".join(span.get("text", "") for span in spans).strip()
-    if not content:
+
+    bold_chars = 0
+    total_chars = 0
+
+    for span in spans:
+        text = span.get("text", "")
+        if not text:
+            continue
+        font_name = str(span.get("font") or "").lower()
+        flags = int(span.get("flags") or 0)
+        is_span_bold = "bold" in font_name or bool(flags & 2)
+        char_count = len(text.strip())
+        total_chars += char_count
+        if is_span_bold:
+            bold_chars += char_count
+
+    raw_text = "".join(span.get("text", "") for span in spans).strip()
+    if not raw_text:
         return None
+
+    # Determine weight by majority of character content — no markdown encoding
+    line_weight = "bold" if total_chars > 0 and bold_chars / total_chars >= 0.5 else "normal"
 
     x0, y0, x1, y1 = line.get("bbox", [0, 0, 0, 0])
     first_span = spans[0]
     font_size = float(first_span.get("size") or 12)
     font_name = str(first_span.get("font") or "helv")
     return {
-        "content": content,
+        "content": raw_text,
         "x0": float(x0),
         "y0": float(y0),
         "x1": float(x1),
         "y1": float(y1),
         "font_size": font_size,
         "font_family": font_name,
-        "font_weight": "bold" if "bold" in font_name.lower() else "normal",
+        "font_weight": line_weight,
         "font_style": "italic" if any(token in font_name.lower() for token in ("italic", "oblique")) else "normal",
         "color": _int_color_to_hex(int(first_span.get("color") or 0)),
     }
@@ -195,7 +265,9 @@ def _text_element_from_lines(lines: list[dict], page_number: int, block_index: i
 def _ensure_export_pages(doc: fitz.Document, document: DocumentModel) -> None:
     for page_model in sorted(document.pages, key=lambda page: page.page_number):
         while doc.page_count < page_model.page_number:
-            doc.new_page(width=page_model.width, height=page_model.height)
+            new_page = doc.new_page(width=page_model.width, height=page_model.height)
+            if getattr(page_model, "rotation", 0):
+                new_page.set_rotation(page_model.rotation)
 
 
 def _apply_source_redactions(doc: fitz.Document, document: DocumentModel) -> None:
@@ -275,3 +347,35 @@ def _original_rect(element: TextElement) -> fitz.Rect:
     width = element.source.original_width if element.source.original_width is not None else element.width
     height = element.source.original_height if element.source.original_height is not None else element.height
     return fitz.Rect(x, y, x + width, y + height)
+
+
+def convert_pdf_to_docx(pdf_data: bytes) -> bytes:
+    import os
+    import tempfile
+    from pdf2docx import Converter
+
+    pdf_fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
+    docx_fd, docx_path = tempfile.mkstemp(suffix=".docx")
+    try:
+        os.write(pdf_fd, pdf_data)
+        os.close(pdf_fd)
+        os.close(docx_fd)
+
+        cv = Converter(pdf_path)
+        cv.convert(docx_path, start=0, end=None)
+        cv.close()
+
+        with open(docx_path, "rb") as f:
+            return f.read()
+    finally:
+        if os.path.exists(pdf_path):
+            try:
+                os.unlink(pdf_path)
+            except OSError:
+                pass
+        if os.path.exists(docx_path):
+            try:
+                os.unlink(docx_path)
+            except OSError:
+                pass
+

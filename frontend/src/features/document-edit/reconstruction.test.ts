@@ -50,14 +50,17 @@ function document(elements: TextElement[]): DocumentModel {
 
 function textOfFirstNode(model: DocumentModel): string {
   const node = reconstructStructuredDocument(model).content[0];
+  const joinContent = (items: Array<{ text: string }>) => items.map((i) => i.text).join("");
   switch (node.type) {
     case "bulletList":
     case "orderedList":
-      return node.items[0].content[0].text;
+      return joinContent(node.items[0].content);
     case "paragraph":
     case "heading":
     case "fixedLayout":
-      return node.content[0].text;
+      return joinContent(node.content);
+    default:
+      return "";
   }
 }
 
@@ -79,11 +82,8 @@ describe("reconstructStructuredDocument", () => {
       document([element("left", "Left column", 50, 100, 90), element("right", "Right column", 360, 100, 100)]),
     );
 
-    expect(result.content).toHaveLength(2);
-    expect(result.content.map((node) => (node.type === "paragraph" ? node.content[0].text : ""))).toEqual([
-      "Left column",
-      "Right column",
-    ]);
+    const columns = result.content[0].type === "columns" ? result.content[0].columns : result.content;
+    expect(columns).toHaveLength(2);
   });
 
   it("groups consecutive compatible lines into a paragraph", () => {
@@ -164,8 +164,18 @@ describe("reconstructStructuredDocument", () => {
     expect(result.content[0]).toMatchObject({
       type: "columns",
       columns: [
-        { content: [{ content: [{ text: "Skills" }] }, { content: [{ text: "React Node.js" }] }] },
-        { content: [{ content: [{ text: "Education" }] }, { content: [{ text: "MSc BSc" }] }] },
+        {
+          content: [
+            { content: expect.arrayContaining([expect.objectContaining({ text: "Skills" })]) },
+            { content: expect.arrayContaining([expect.objectContaining({ text: "React" }), expect.objectContaining({ text: "Node.js" })]) },
+          ],
+        },
+        {
+          content: [
+            { content: expect.arrayContaining([expect.objectContaining({ text: "Education" })]) },
+            { content: expect.arrayContaining([expect.objectContaining({ text: "MSc" }), expect.objectContaining({ text: "BSc" })]) },
+          ],
+        },
       ],
     });
   });
@@ -183,5 +193,27 @@ describe("reconstructStructuredDocument", () => {
     expect(result.content[0]).toMatchObject({ type: "heading", level: 1, style: { fontSize: 24 } });
     expect(result.content[0].type === "heading" ? result.content[0].content[0].marks : []).toContain("bold");
     expect(result.content[3].type === "paragraph" ? result.content[3].content[0].marks : []).toContain("italic");
+  });
+
+  it("does not merge top header name and right-aligned contact info into one line", () => {
+    const result = reconstructStructuredDocument(
+      document([
+        element("name", "UDDESHYA RAJ", 50, 40, 150, 20, { fontWeight: "bold" }),
+        element("phone", "+91-7278066976", 400, 40, 120, 12),
+      ]),
+    );
+
+    expect(result.content[0].type === "columns" ? result.content[0].columns : result.content).toHaveLength(2);
+  });
+
+  it("detects tight columns with column gaps below 72pt", () => {
+    const result = reconstructStructuredDocument(
+      document([
+        element("col1", "Column One text", 50, 100, 100),
+        element("col2", "Column Two text", 180, 100, 100),
+      ]),
+    );
+
+    expect(result.content[0].type).toBe("columns");
   });
 });

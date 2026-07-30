@@ -9,7 +9,6 @@ interface TextOverlayElementProps {
   pageNumber?: number;
 }
 
-const MIN_PARAGRAPH_WIDTH = 260;
 const LAYOUT_EPSILON = 0.75;
 
 export function TextOverlayElement({ element, pageNumber }: TextOverlayElementProps) {
@@ -20,8 +19,10 @@ export function TextOverlayElement({ element, pageNumber }: TextOverlayElementPr
   const updateText = useDocumentSession((state) => state.updateText);
   const updateTextHeight = useDocumentSession((state) => state.updateTextHeight);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
   const rect = pageToCssRect(element, zoom);
   const selected = selectedElementId === element.id;
+
   const sourceRect = pageToCssRect(
     {
       x: element.source.originalX ?? element.x,
@@ -31,23 +32,29 @@ export function TextOverlayElement({ element, pageNumber }: TextOverlayElementPr
     },
     zoom,
   );
-  const isModifiedExisting = !element.source.isNew && element.content !== (element.source.originalText ?? "");
-  const isReflowedExisting =
-    !element.source.isNew && Math.abs(element.y - (element.source.originalY ?? element.y)) > LAYOUT_EPSILON;
-  const shouldShowModification = element.source.isNew || isModifiedExisting || isReflowedExisting || selected;
-  const shouldUseParagraphWidth = isModifiedExisting || element.source.isNew;
-  const sourceBelongsToRenderedPage = pageNumber === undefined || element.source.pageNumber === pageNumber;
-  const editorWidth = shouldUseParagraphWidth
-    ? Math.max(rect.width, sourceRect.width, MIN_PARAGRAPH_WIDTH, 24)
-    : Math.max(rect.width, sourceRect.width, 24);
-  const editorHeight = Math.max(rect.height, sourceRect.height, element.fontSize * zoom * 1.4);
-  const minimumEditorHeight = Math.max(sourceRect.height, element.fontSize * zoom * 1.4);
+
+  const isModifiedExisting =
+    !element.source.isNew && element.content !== (element.source.originalText ?? "");
+
+  // Only show mask + replacement text when the user has ACTUALLY changed content.
+  // Reflowed-but-unedited elements remain as transparent hit-regions — the PDF
+  // canvas renders them correctly without any overlay interference.
+  const shouldShowModification = element.source.isNew || isModifiedExisting || selected;
+  const sourceBelongsToRenderedPage =
+    pageNumber === undefined || element.source.pageNumber === pageNumber;
+
+  // Use the source (original PDF) width as the authoritative display width.
+  // This ensures text wraps exactly as in the original PDF — no horizontal overflow.
+  const displayWidth = Math.max(sourceRect.width, rect.width, 24);
+  const editorHeight = Math.max(rect.height, sourceRect.height, element.fontSize * zoom * 1.15);
+  const minimumEditorHeight = Math.max(sourceRect.height, element.fontSize * zoom * 1.15);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
     if (!selected || !textarea || (!isModifiedExisting && !element.source.isNew)) {
       return;
     }
+    // Auto-grow height for multi-line content
     textarea.style.height = "auto";
     const measuredHeight = Math.max(textarea.scrollHeight, minimumEditorHeight);
     textarea.style.height = `${measuredHeight}px`;
@@ -69,7 +76,7 @@ export function TextOverlayElement({ element, pageNumber }: TextOverlayElementPr
     zoom,
   ]);
 
-  if (mode !== "quick-edit") {
+  if (mode !== "document-edit" && mode !== "quick-edit") {
     return null;
   }
 
@@ -77,34 +84,38 @@ export function TextOverlayElement({ element, pageNumber }: TextOverlayElementPr
     updateText(element.id, event.target.value);
   };
 
-  const sharedStyle = {
-    left: rect.x,
-    top: rect.y,
-    width: `min(${editorWidth}px, calc(100% - ${rect.x}px))`,
-    maxWidth: `calc(100% - ${rect.x}px)`,
-    height: editorHeight,
+  /**
+   * Shared typography — mirrors exactly what the PDF glyph looks like.
+   * - `whiteSpace: "pre-wrap"` preserves original line breaks, wraps at container width
+   * - `overflowWrap: "break-word"` prevents overflow beyond the element width
+   * - Width is clamped to the original PDF element width so nothing extends off-page
+   * - No padding — shifts text away from its PDF coordinate origin
+   */
+  const sharedTypography = {
     fontSize: element.fontSize * zoom,
+    fontFamily: element.fontFamily || "Inter, Arial, sans-serif",
+    fontWeight: element.fontWeight,
+    fontStyle: element.fontStyle ?? "normal",
     color: element.color,
-    fontFamily: "Arial, sans-serif",
     textAlign: element.alignment,
-    lineHeight: "1.2",
-    overflowWrap: "break-word",
-    whiteSpace: "pre-wrap",
-  } as const;
-
-  const maskStyle = {
-    left: sourceRect.x,
-    top: sourceRect.y,
-    width: Math.max(sourceRect.width, 1),
-    height: Math.max(sourceRect.height, element.fontSize * zoom * 1.4),
+    lineHeight: "1.15",
+    whiteSpace: "pre-wrap" as const,
+    overflowWrap: "break-word" as const,
+    padding: 0,
+    margin: 0,
   };
 
+  // ── Hit region (unmodified text) ──────────────────────────────────────────
+  // Transparent clickable zone over the PDF canvas text.
+  // NO background — canvas shows through perfectly.
   if (!shouldShowModification) {
     return (
       <button
         type="button"
-        className={`absolute cursor-text border bg-transparent outline-none ${
-          selected ? "border-accent ring-2 ring-accent/25" : "border-transparent hover:border-accent/60"
+        className={`absolute cursor-text bg-transparent outline-none transition-colors ${
+          selected
+            ? "border border-accent ring-1 ring-accent/20"
+            : "border border-transparent hover:border-accent/40"
         }`}
         style={{
           left: sourceRect.x,
@@ -116,32 +127,55 @@ export function TextOverlayElement({ element, pageNumber }: TextOverlayElementPr
           event.stopPropagation();
           selectElement(element.id);
         }}
-        aria-label={`Select text region: ${element.content}`}
+        aria-label={`Edit text: ${element.content.slice(0, 60)}`}
         data-testid="text-hit-region"
       />
     );
   }
 
-  const commonPreviewClasses = `absolute box-border whitespace-pre-wrap break-words border bg-white p-0 leading-tight outline-none ${
-    selected ? "border-accent ring-2 ring-accent/25" : "border-transparent"
-  }`;
+  const maskStyle = {
+    left: sourceRect.x,
+    top: sourceRect.y,
+    width: Math.max(sourceRect.width, 1),
+    height: Math.max(sourceRect.height, element.fontSize * zoom * 1.15),
+  };
 
+  // Only mask the original PDF canvas text when the content has actually changed.
+  // Before any typing, the PDF canvas text should still show through.
+  const shouldMaskSource = sourceBelongsToRenderedPage && !element.source.isNew && isModifiedExisting;
+
+  // ── Modified text preview (not active/selected) ───────────────────────────
   if (!selected) {
     return (
       <>
-        {!element.source.isNew && sourceBelongsToRenderedPage && (
+        {shouldMaskSource && (
           <div className="absolute bg-white" style={maskStyle} aria-hidden data-testid="text-source-mask" />
         )}
-        <div className={commonPreviewClasses} style={sharedStyle} data-testid="modified-text-preview">
+        <div
+          className="absolute box-border overflow-hidden p-0 leading-tight"
+          style={{
+            left: rect.x,
+            top: rect.y,
+            width: displayWidth,
+            height: editorHeight,
+            background: "white",
+            ...sharedTypography,
+          }}
+          data-testid="modified-text-preview"
+        >
           {element.content}
         </div>
       </>
     );
   }
 
+  // ── Active textarea (being edited) ────────────────────────────────────────
+  // The white mask only covers the original PDF canvas text if content has changed.
+  // Before the user types, the textarea is transparent so the canvas text shows
+  // through — the user can see what they're editing without a blank white box.
   return (
     <>
-      {!element.source.isNew && sourceBelongsToRenderedPage && (
+      {shouldMaskSource && (
         <div className="absolute bg-white" style={maskStyle} aria-hidden data-testid="text-source-mask" />
       )}
       <textarea
@@ -152,8 +186,20 @@ export function TextOverlayElement({ element, pageNumber }: TextOverlayElementPr
         onMouseDown={(event) => event.stopPropagation()}
         onChange={onChange}
         onBlur={() => window.setTimeout(() => selectElement(null), 0)}
-        className="absolute box-border resize-none overflow-hidden break-words border border-accent bg-white p-0 leading-tight outline-none ring-2 ring-accent/25"
-        style={sharedStyle}
+        className="absolute box-border resize-none border border-accent p-0 leading-tight outline-none ring-1 ring-accent/20"
+        style={{
+          left: rect.x,
+          top: rect.y,
+          width: displayWidth,
+          height: editorHeight,
+          overflow: "hidden",
+          // Transparent until typing starts — canvas text shows through
+          background: isModifiedExisting ? "white" : "transparent",
+          ...sharedTypography,
+          // When transparent, set color to transparent too so canvas text isn't
+          // doubled by the textarea text on top
+          color: isModifiedExisting ? element.color : "transparent",
+        }}
         aria-label="Editable PDF text"
         data-testid={element.source.isNew ? "new-text-editor" : "active-text-editor"}
       />

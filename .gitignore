@@ -7,3 +7,9 @@ frontend/*.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
 .tmp-manual/
+.vercel/
+.vercel-stage/
+*.zip
+.env
+*.env
+

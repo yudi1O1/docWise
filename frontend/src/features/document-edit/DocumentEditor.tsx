@@ -1,4 +1,4 @@
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EditorContent, JSONContent, useEditor } from "@tiptap/react";
 import { Extension, Node } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
@@ -16,8 +16,10 @@ import {
   Italic,
   List,
   ListOrdered,
+  Loader2,
   Pilcrow,
   Redo2,
+  Sparkles,
   Strikethrough,
   Type,
   Underline as UnderlineIcon,
@@ -26,27 +28,49 @@ import {
 
 import { useDocumentSession } from "../document-session/store";
 import type { ColumnNode, DocumentNode, InlineContent, StructuredDocument } from "../../types/document";
+import { sendSuperDocsAiEdit } from "../../services/api";
 
 const FONT_SIZES = [10, 12, 14, 16, 18, 24, 32];
 
-const FontSize = Extension.create({
-  name: "fontSize",
+/** Single extension that carries all PDF-sourced typography as inline styles */
+const TypographyAttrs = Extension.create({
+  name: "typographyAttrs",
 
   addGlobalAttributes() {
+    const blockTypes = ["paragraph", "heading", "listItem"];
     return [
       {
-        types: ["paragraph", "heading", "listItem"],
+        types: blockTypes,
         attributes: {
           fontSize: {
             default: null,
-            parseHTML: (element) => {
-              const value = element.style.fontSize;
-              return value ? Number.parseFloat(value) : null;
-            },
-            renderHTML: (attributes) => {
-              const fontSize = attributes.fontSize;
-              return typeof fontSize === "number" ? { style: `font-size: ${fontSize}px` } : {};
-            },
+            parseHTML: (el) => el.style.fontSize ? parseFloat(el.style.fontSize) : null,
+            renderHTML: (attrs) => attrs.fontSize ? { style: `font-size:${attrs.fontSize}px` } : {},
+          },
+          fontFamily: {
+            default: null,
+            parseHTML: (el) => el.style.fontFamily || null,
+            renderHTML: (attrs) => attrs.fontFamily ? { style: `font-family:${attrs.fontFamily}` } : {},
+          },
+          fontWeight: {
+            default: null,
+            parseHTML: (el) => el.style.fontWeight || null,
+            renderHTML: (attrs) => attrs.fontWeight ? { style: `font-weight:${attrs.fontWeight}` } : {},
+          },
+          fontStyle: {
+            default: null,
+            parseHTML: (el) => el.style.fontStyle || null,
+            renderHTML: (attrs) => attrs.fontStyle ? { style: `font-style:${attrs.fontStyle}` } : {},
+          },
+          color: {
+            default: null,
+            parseHTML: (el) => el.style.color || null,
+            renderHTML: (attrs) => attrs.color ? { style: `color:${attrs.color}` } : {},
+          },
+          textIndent: {
+            default: null,
+            parseHTML: (el) => el.style.paddingLeft ? parseFloat(el.style.paddingLeft) : null,
+            renderHTML: (attrs) => attrs.textIndent ? { style: `padding-left:${attrs.textIndent}px` } : {},
           },
         },
       },
@@ -81,9 +105,18 @@ const DocumentColumn = Node.create({
   },
 });
 
+import { reconstructStructuredDocument } from "./reconstruction";
+
 export function DocumentEditor() {
-  const structuredDocument = useDocumentSession((state) => state.structuredDocument);
+  const document = useDocumentSession((state) => state.document);
+  const structuredDocumentState = useDocumentSession((state) => state.structuredDocument);
   const updateStructuredContent = useDocumentSession((state) => state.updateStructuredContent);
+  const setEditorInstance = useDocumentSession((state) => state.setEditorInstance);
+  const isUpdatingFromEditorRef = useRef(false);
+  const structuredDocument = useMemo(
+    () => structuredDocumentState ?? (document ? reconstructStructuredDocument(document) : null),
+    [document, structuredDocumentState],
+  );
   const tiptapContent = useMemo(() => toTiptapDocument(structuredDocument), [structuredDocument]);
 
   const editor = useEditor({
@@ -93,7 +126,7 @@ export function DocumentEditor() {
       }),
       Underline,
       TextAlign.configure({ types: ["heading", "paragraph"] }),
-      FontSize,
+      TypographyAttrs,
       ColumnSection,
       DocumentColumn,
     ],
@@ -105,12 +138,24 @@ export function DocumentEditor() {
       },
     },
     onUpdate: ({ editor: activeEditor }) => {
+      isUpdatingFromEditorRef.current = true;
       updateStructuredContent(fromTiptapDocument(activeEditor.getJSON(), structuredDocument?.content ?? []));
+      window.setTimeout(() => {
+        isUpdatingFromEditorRef.current = false;
+      }, 0);
     },
   });
 
   useEffect(() => {
+    setEditorInstance(editor);
+    return () => setEditorInstance(null);
+  }, [editor, setEditorInstance]);
+
+  useEffect(() => {
     if (!editor || !structuredDocument) {
+      return;
+    }
+    if (isUpdatingFromEditorRef.current) {
       return;
     }
     const nextContent = toTiptapDocument(structuredDocument);
@@ -123,8 +168,11 @@ export function DocumentEditor() {
     return null;
   }
 
+  const isAiHighlighted = useDocumentSession((state) => state.isAiHighlighted);
   const isScanned = structuredDocument.content.length === 0;
-  const firstPage = structuredDocument.pages[0];
+  const pages = structuredDocument.pages.length > 0 ? structuredDocument.pages : [{ pageNumber: 1, width: 612, height: 792 }];
+
+  const pageWidth = Math.min(Math.max(...pages.map((p) => p.width), 612), 820);
 
   return (
     <section className="grid min-h-0 grid-rows-[auto_1fr] bg-[#e8e2d6]" data-testid="document-edit-workspace">
@@ -134,12 +182,9 @@ export function DocumentEditor() {
         data-testid="document-edit-scroll-region"
       >
         <div
-          className="mx-auto overflow-visible bg-white shadow-sm"
-          style={{
-            width: firstPage ? Math.min(firstPage.width, 820) : 760,
-            minHeight: firstPage ? firstPage.height : 980,
-          }}
-          data-testid="document-edit-page"
+          className={`mx-auto bg-white shadow-md transition-all duration-300 ${isAiHighlighted ? "docwise-highlight-flash" : ""}`}
+          style={{ width: pageWidth, minHeight: pages[0]?.height ?? 792 }}
+          data-testid="document-edit-page-1"
         >
           {isScanned ? (
             <div className="p-16 text-sm leading-6 text-ink/75" role="status">
@@ -323,7 +368,16 @@ function toTiptapNode(node: DocumentNode): JSONContent[] {
     return [
       {
         type: "heading",
-        attrs: { level: node.level, textAlign: node.style.alignment ?? "left", fontSize: node.style.fontSize ?? null },
+        attrs: {
+          level: node.level,
+          textAlign: node.style.alignment ?? "left",
+          fontSize: node.style.fontSize ?? null,
+          fontFamily: node.style.fontFamily ?? null,
+          fontWeight: node.style.fontWeight ?? "bold",
+          fontStyle: node.style.fontStyle ?? null,
+          color: node.style.color ?? null,
+          textIndent: node.style.indentation && node.style.indentation > 60 ? node.style.indentation - 60 : null,
+        },
         content: toTiptapInline(node.content),
       },
     ];
@@ -333,7 +387,15 @@ function toTiptapNode(node: DocumentNode): JSONContent[] {
     return [
       {
         type: "paragraph",
-        attrs: { textAlign: node.style?.alignment ?? "left", fontSize: node.style?.fontSize ?? null },
+        attrs: {
+          textAlign: node.style?.alignment ?? "left",
+          fontSize: node.style?.fontSize ?? null,
+          fontFamily: node.style?.fontFamily ?? null,
+          fontWeight: node.style?.fontWeight ?? null,
+          fontStyle: node.style?.fontStyle ?? null,
+          color: node.style?.color ?? null,
+          textIndent: node.style?.indentation && node.style.indentation > 60 ? node.style.indentation - 60 : null,
+        },
         content: toTiptapInline(node.content),
       },
     ];
@@ -359,7 +421,14 @@ function toTiptapNode(node: DocumentNode): JSONContent[] {
         content: [
           {
             type: "paragraph",
-            attrs: { fontSize: item.style?.fontSize ?? node.style?.fontSize ?? null },
+            attrs: {
+              fontSize: item.style?.fontSize ?? node.style?.fontSize ?? null,
+              fontFamily: item.style?.fontFamily ?? node.style?.fontFamily ?? null,
+              fontWeight: item.style?.fontWeight ?? null,
+              fontStyle: item.style?.fontStyle ?? null,
+              color: item.style?.color ?? null,
+              textIndent: null,
+            },
             content: toTiptapInline(item.content),
           },
         ],
@@ -394,7 +463,10 @@ function fromTiptapNode(node: JSONContent, index: number, previousNode?: Documen
           ...previousNode?.style,
           alignment: normalizeAlignment(node.attrs?.textAlign),
           fontSize: normalizeFontSize(node.attrs?.fontSize, previousNode?.style?.fontSize),
+          fontFamily: typeof node.attrs?.fontFamily === "string" ? node.attrs.fontFamily : previousNode?.style?.fontFamily,
           fontWeight: "bold",
+          fontStyle: node.attrs?.fontStyle === "italic" ? "italic" : previousNode?.style?.fontStyle,
+          color: typeof node.attrs?.color === "string" ? node.attrs.color : previousNode?.style?.color,
         },
         sourcePage: previousNode?.sourcePage,
         sourceBounds: previousNode?.sourceBounds,
@@ -450,6 +522,10 @@ function fromTiptapNode(node: JSONContent, index: number, previousNode?: Documen
           ...previousNode?.style,
           alignment: normalizeAlignment(node.attrs?.textAlign),
           fontSize: normalizeFontSize(node.attrs?.fontSize, previousNode?.style?.fontSize),
+          fontFamily: typeof node.attrs?.fontFamily === "string" ? node.attrs.fontFamily : previousNode?.style?.fontFamily,
+          fontWeight: typeof node.attrs?.fontWeight === "string" ? node.attrs.fontWeight : previousNode?.style?.fontWeight,
+          fontStyle: node.attrs?.fontStyle === "italic" ? "italic" : previousNode?.style?.fontStyle,
+          color: typeof node.attrs?.color === "string" ? node.attrs.color : previousNode?.style?.color,
         },
         sourcePage: previousNode?.sourcePage,
         sourceBounds: previousNode?.sourceBounds,
